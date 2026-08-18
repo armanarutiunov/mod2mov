@@ -1,0 +1,2 @@
+[console_scripts]
+mod2mov = mod2mov:main

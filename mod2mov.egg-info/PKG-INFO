@@ -1,3 +1,21 @@
+Metadata-Version: 2.4
+Name: mod2mov
+Version: 1.0.0
+Summary: Convert camcorder .MOD files to .mov, renamed in shooting order with dates preserved
+Author: Arman Arutiunov
+License: MIT
+Project-URL: Homepage, https://github.com/armanarutiunov/mod2mov
+Keywords: video,ffmpeg,camcorder,mod,deinterlace,mpeg2
+Classifier: Environment :: Console
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python :: 3
+Classifier: Topic :: Multimedia :: Video :: Conversion
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: imageio-ffmpeg>=0.4.9
+Dynamic: license-file
+
 # mod2mov
 
 Convert camcorder `.MOD` files to `.mov`, renamed in shooting order with their
@@ -17,60 +35,41 @@ sorting by date still works.
 ## Requirements
 
 - Python 3.8+
-- ffmpeg — **bundled** if you install with `pipx`/`pip` (see below), otherwise
-  `brew install ffmpeg`
+- `ffmpeg` on your `PATH` (`brew install ffmpeg`)
 
 ## Install
 
-### With pipx (recommended — nothing else to install)
-
 ```sh
-git clone https://github.com/armanarutiunov/mod2mov.git
+git clone git@github.com:armanarutiunov/mod2mov.git
 cd mod2mov
 ./install.sh
 ```
 
-`install.sh` uses `pipx` when it's available. That pulls in the
-[`imageio-ffmpeg`](https://pypi.org/project/imageio-ffmpeg/) dependency, which
-ships a static ffmpeg binary (~47MB) inside the virtualenv — so the tool works
-on a machine with no ffmpeg of its own. Verified: with `ffmpeg` and `ffprobe`
-both absent from `PATH`, conversions still run correctly.
+`install.sh` symlinks the script into the first writable directory it finds on
+your `PATH` — trying `~/.local/bin`, `~/bin`, `/opt/homebrew/bin`, then
+`/usr/local/bin` — so no `sudo` is needed in the usual case. It's a symlink
+rather than a copy, so `git pull` updates the installed tool.
 
-No pipx? `brew install pipx` first, or install straight from the repo:
-
-```sh
-pipx install git+https://github.com/armanarutiunov/mod2mov.git
-```
-
-### As a symlink (lighter, uses your own ffmpeg)
+To choose the location yourself:
 
 ```sh
-./install.sh --link          # or: ./install.sh --link ~/bin
+./install.sh ~/bin
 ```
 
-This symlinks `mod2mov.py` into the first writable directory on your `PATH`
-(`~/.local/bin`, `~/bin`, `/opt/homebrew/bin`, `/usr/local/bin`), so no `sudo`
-is needed and `git pull` updates the installed tool. It has no bundled ffmpeg,
-so you need `brew install ffmpeg` — the script warns if it's missing.
+If the directory isn't on your `PATH`, the script tells you the line to add to
+your shell profile. It also warns if `ffmpeg` is missing.
 
-### Which ffmpeg gets used
+Prefer to do it by hand:
 
-Resolved in this order, first hit wins:
-
-1. `--ffmpeg /path/to/ffmpeg`
-2. `$MOD2MOV_FFMPEG`
-3. `ffmpeg` on your `PATH`
-4. the bundled copy from `imageio-ffmpeg`
-
-A system ffmpeg wins over the bundled one — it's usually newer, and you chose
-it. Note the bundled build ships without `ffprobe`; the tool falls back to
-parsing ffmpeg's own output for its duration checks, so nothing is lost.
+```sh
+chmod +x mod2mov
+ln -s "$PWD/mod2mov" ~/.local/bin/mod2mov
+```
 
 ### Uninstall
 
 ```sh
-pipx uninstall mod2mov      # if installed with pipx
-rm "$(command -v mod2mov)"  # if symlinked
+rm "$(command -v mod2mov)"
 ```
 
 ## Usage
@@ -139,7 +138,6 @@ camera movement in it. **a** and **b** differ in motion feel, not quality;
 | `--no-preserve-dates` | off | Don't copy source timestamps onto the output |
 | `--overwrite` | off | Replace existing output files |
 | `--manifest CSV` | — | Write a source-to-output mapping |
-| `--ffmpeg PATH` | auto | Use a specific ffmpeg binary (also `$MOD2MOV_FFMPEG`) |
 | `-n`, `--dry-run` | off | List what would be converted, then exit |
 
 ## Notes on correctness
@@ -160,12 +158,4 @@ camera movement in it. **a** and **b** differ in motion feel, not quality;
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
-
-The bundled ffmpeg is a separate work with its own terms. `imageio-ffmpeg`
-ships a GPL build (configured `--enable-gpl --enable-libx264`), so a pipx/pip
-install pulls in GPL-licensed binaries alongside this MIT-licensed script. That
-is fine for personal use and for redistributing this repo, which contains no
-ffmpeg binaries of its own — but worth knowing if you bundle mod2mov into a
-proprietary product. Installing with `--link` and your own ffmpeg avoids the
-question entirely.
+MIT

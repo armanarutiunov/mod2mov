@@ -1,0 +1,10 @@
+LICENSE
+README.md
+mod2mov.py
+pyproject.toml
+mod2mov.egg-info/PKG-INFO
+mod2mov.egg-info/SOURCES.txt
+mod2mov.egg-info/dependency_links.txt
+mod2mov.egg-info/entry_points.txt
+mod2mov.egg-info/requires.txt
+mod2mov.egg-info/top_level.txt

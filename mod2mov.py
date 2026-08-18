@@ -10,6 +10,7 @@ them to H.264/AAC in a .mov container and renames them into a readable sequence.
 import argparse
 import csv
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -48,17 +49,56 @@ def die(msg, code=1):
     sys.exit(code)
 
 
-def probe_duration(path):
-    """Return duration in seconds, or None if ffprobe can't determine it."""
+def resolve_ffmpeg(explicit=None):
+    """Locate an ffmpeg binary.
+
+    A system install is preferred -- it is usually newer and the user chose it --
+    with the copy bundled by the imageio-ffmpeg dependency as the fallback, so
+    the tool works on a machine with no ffmpeg of its own.
+    """
+    if explicit:
+        return explicit if Path(explicit).exists() else None
+    for candidate in (os.environ.get("MOD2MOV_FFMPEG"), shutil.which("ffmpeg")):
+        if candidate and Path(candidate).exists():
+            return candidate
     try:
-        out = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-             "-of", "csv=p=0", str(path)],
-            capture_output=True, text=True, timeout=60,
-        )
-        return float(out.stdout.strip())
-    except (ValueError, subprocess.SubprocessError):
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
         return None
+
+
+DURATION_RE = re.compile(r"Duration:\s*(\d+):(\d\d):(\d\d(?:\.\d+)?)")
+
+
+def probe_duration(path, ffmpeg):
+    """Return duration in seconds, or None if it can't be determined.
+
+    Uses ffprobe when available. The bundled ffmpeg ships without ffprobe, so
+    fall back to parsing the Duration line ffmpeg prints when asked to describe
+    an input.
+    """
+    ffprobe = shutil.which("ffprobe")
+    if ffprobe:
+        try:
+            out = subprocess.run(
+                [ffprobe, "-v", "error", "-show_entries", "format=duration",
+                 "-of", "csv=p=0", str(path)],
+                capture_output=True, text=True, timeout=60,
+            )
+            return float(out.stdout.strip())
+        except (ValueError, subprocess.SubprocessError):
+            pass
+    try:
+        out = subprocess.run([ffmpeg, "-hide_banner", "-i", str(path)],
+                             capture_output=True, text=True, timeout=60)
+        match = DURATION_RE.search(out.stderr)
+        if match:
+            h, m, s = match.groups()
+            return int(h) * 3600 + int(m) * 60 + float(s)
+    except subprocess.SubprocessError:
+        pass
+    return None
 
 
 def find_sources(src_dir, extensions):
@@ -77,8 +117,8 @@ def find_sources(src_dir, extensions):
     return sorted(files, key=lambda p: (p.stat().st_mtime, p.name.lower()))
 
 
-def build_command(src, dst, mode, args):
-    cmd = ["ffmpeg", "-nostdin", "-loglevel", "error", "-y" if args.overwrite else "-n",
+def build_command(src, dst, mode, args, ffmpeg):
+    cmd = [ffmpeg, "-nostdin", "-loglevel", "error", "-y" if args.overwrite else "-n",
            "-i", str(src)]
     if MODES[mode]["vf"]:
         cmd += ["-vf", MODES[mode]["vf"]]
@@ -90,7 +130,7 @@ def build_command(src, dst, mode, args):
     return cmd
 
 
-def main():
+def run():
     epilog = "modes:\n" + "".join(
         f"  {k}  {v['label']:<22} {v['help']}\n" for k, v in MODES.items()
     ) + """
@@ -135,12 +175,16 @@ examples:
                         help="replace existing output files")
     parser.add_argument("--manifest", type=Path, metavar="CSV",
                         help="write a source-to-output mapping to this CSV file")
+    parser.add_argument("--ffmpeg", metavar="PATH",
+                        help="use a specific ffmpeg binary (also: MOD2MOV_FFMPEG)")
     parser.add_argument("-n", "--dry-run", action="store_true",
                         help="list what would be converted, then exit")
     args = parser.parse_args()
 
-    if shutil.which("ffmpeg") is None:
-        die("ffmpeg not found on PATH. Install it with: brew install ffmpeg")
+    ffmpeg = resolve_ffmpeg(args.ffmpeg)
+    if ffmpeg is None:
+        die("no ffmpeg available. Either install it (brew install ffmpeg), or "
+            "reinstall this tool with its bundled copy (pipx install mod2mov).")
     if args.digits < 1:
         die("--digits must be at least 1")
 
@@ -196,7 +240,7 @@ examples:
     failures, done = [], []
     for i, (src, dst) in enumerate(jobs, 1):
         print(f"[{i}/{len(jobs)}] {src.name} -> {dst.name}", flush=True)
-        result = subprocess.run(build_command(src, dst, args.mode, args),
+        result = subprocess.run(build_command(src, dst, args.mode, args, ffmpeg),
                                 capture_output=True, text=True)
         if result.returncode != 0 or not dst.exists():
             detail = result.stderr.strip().splitlines()
@@ -210,7 +254,7 @@ examples:
             os.utime(dst, (st.st_atime, st.st_mtime))
 
         # A truncated encode is worse than a failed one -- it looks like success.
-        src_dur, dst_dur = probe_duration(src), probe_duration(dst)
+        src_dur, dst_dur = probe_duration(src, ffmpeg), probe_duration(dst, ffmpeg)
         if src_dur and dst_dur and abs(src_dur - dst_dur) > 0.5:
             print(f"    warning: duration mismatch "
                   f"({src_dur:.1f}s -> {dst_dur:.1f}s), output may be truncated",
@@ -233,9 +277,14 @@ examples:
     return 0
 
 
-if __name__ == "__main__":
+def main():
+    """Entry point. Also used by the console script installed via pip/pipx."""
     try:
-        sys.exit(main())
+        return run()
     except KeyboardInterrupt:
         print("\ninterrupted", file=sys.stderr)
-        sys.exit(130)
+        return 130
+
+
+if __name__ == "__main__":
+    sys.exit(main())
