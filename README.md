@@ -24,8 +24,34 @@ sorting by date still works.
 ```sh
 git clone git@github.com:armanarutiunov/mod2mov.git
 cd mod2mov
+./install.sh
+```
+
+`install.sh` symlinks the script into the first writable directory it finds on
+your `PATH` — trying `~/.local/bin`, `~/bin`, `/opt/homebrew/bin`, then
+`/usr/local/bin` — so no `sudo` is needed in the usual case. It's a symlink
+rather than a copy, so `git pull` updates the installed tool.
+
+To choose the location yourself:
+
+```sh
+./install.sh ~/bin
+```
+
+If the directory isn't on your `PATH`, the script tells you the line to add to
+your shell profile. It also warns if `ffmpeg` is missing.
+
+Prefer to do it by hand:
+
+```sh
 chmod +x mod2mov
-ln -s "$PWD/mod2mov" /usr/local/bin/mod2mov   # optional
+ln -s "$PWD/mod2mov" ~/.local/bin/mod2mov
+```
+
+### Uninstall
+
+```sh
+rm "$(command -v mod2mov)"
 ```
 
 ## Usage
