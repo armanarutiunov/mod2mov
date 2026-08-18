@@ -1,0 +1,6 @@
+.DS_Store
+*.mov
+*.MOD
+*.mod
+*.csv
+__pycache__/

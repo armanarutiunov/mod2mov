@@ -1,0 +1,211 @@
+#!/usr/bin/env python3
+"""Convert camcorder .MOD files to .mov, in shooting order, with dates preserved.
+
+MOD files are MPEG-2 program streams written by standard-definition camcorders
+(JVC Everio and friends). They are interlaced, use non-square pixels, and carry
+AC-3 audio -- a combination modern players handle badly. This tool re-encodes
+them to H.264/AAC in a .mov container and renames them into a readable sequence.
+"""
+
+import argparse
+import csv
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+# Deinterlacing modes. Camcorder MOD footage stores 50 fields per second woven
+# into 25 frames; the two fields in a frame are 1/50s apart, so anything moving
+# shows comb artifacts on a progressive display.
+MODES = {
+    "a": {
+        "label": "deinterlace to 25p",
+        "help": "one frame per frame -- clean, film-like motion, smallest files",
+        # yadif=0 -> one output frame per input frame (drops half the fields)
+        "vf": "yadif=0:-1:0",
+        "extra": [],
+    },
+    "b": {
+        "label": "deinterlace to 50p",
+        "help": "one frame per field -- full motion smoothness, ~35% larger",
+        # yadif=1 -> one output frame per field, doubling the frame rate
+        "vf": "yadif=1:-1:0",
+        "extra": [],
+    },
+    "c": {
+        "label": "keep interlaced",
+        "help": "preserve the original fields -- most faithful, but combs on players that don't deinterlace",
+        "vf": None,
+        # Encode fields as fields and tag the stream top-field-first.
+        "extra": ["-flags", "+ilme+ildct", "-top", "1"],
+    },
+}
+
+
+def die(msg, code=1):
+    print(f"error: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def probe_duration(path):
+    """Return duration in seconds, or None if ffprobe can't determine it."""
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "csv=p=0", str(path)],
+            capture_output=True, text=True, timeout=60,
+        )
+        return float(out.stdout.strip())
+    except (ValueError, subprocess.SubprocessError):
+        return None
+
+
+def find_sources(src_dir, extensions):
+    """Collect source files in shooting order.
+
+    Camcorders number files in hex (MOV009 -> MOV00A -> MOV00F -> MOV010), so
+    name order usually already matches shooting order. Sorting by mtime first is
+    more robust -- it survives a card whose counter has wrapped -- with the name
+    as tiebreaker for clips written within the same second.
+    """
+    wanted = {e.lower().lstrip(".") for e in extensions}
+    files = [
+        p for p in src_dir.iterdir()
+        if p.is_file() and p.suffix.lower().lstrip(".") in wanted
+    ]
+    return sorted(files, key=lambda p: (p.stat().st_mtime, p.name.lower()))
+
+
+def build_command(src, dst, mode, args):
+    cmd = ["ffmpeg", "-nostdin", "-loglevel", "error", "-y" if args.overwrite else "-n",
+           "-i", str(src)]
+    if MODES[mode]["vf"]:
+        cmd += ["-vf", MODES[mode]["vf"]]
+    cmd += ["-c:v", "libx264", "-preset", args.preset, "-crf", str(args.crf),
+            "-pix_fmt", "yuv420p"]
+    cmd += MODES[mode]["extra"]
+    cmd += ["-c:a", "aac", "-b:a", args.audio_bitrate]
+    cmd += ["-movflags", "+faststart", str(dst)]
+    return cmd
+
+
+def main():
+    epilog = "modes:\n" + "".join(
+        f"  {k}  {v['label']:<22} {v['help']}\n" for k, v in MODES.items()
+    ) + "\nexample:\n  mod2mov ~/Downloads/videos1 ~/Movies/holiday --mode a\n"
+
+    parser = argparse.ArgumentParser(
+        prog="mod2mov",
+        description="Convert camcorder .MOD files to .mov, renaming them in "
+                    "shooting order and preserving their original dates.",
+        epilog=epilog,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("source", type=Path, help="directory containing .MOD files")
+    parser.add_argument("dest", type=Path, help="output directory (created if needed)")
+    parser.add_argument("-m", "--mode", choices=sorted(MODES), default="a",
+                        help="deinterlacing mode (default: a)")
+    parser.add_argument("-p", "--prefix", default="video_",
+                        help="output filename prefix (default: video_)")
+    parser.add_argument("-d", "--digits", type=int, default=3,
+                        help="zero-padded digits in the sequence (default: 3)")
+    parser.add_argument("-s", "--start", type=int, default=1,
+                        help="first sequence number (default: 1)")
+    parser.add_argument("--crf", type=int, default=18,
+                        help="x264 quality, lower is better (default: 18)")
+    parser.add_argument("--preset", default="slow",
+                        help="x264 speed/efficiency preset (default: slow)")
+    parser.add_argument("--audio-bitrate", default="192k",
+                        help="AAC bitrate (default: 192k)")
+    parser.add_argument("--ext", action="append", default=None, metavar="EXT",
+                        help="source extension to match, repeatable (default: MOD)")
+    parser.add_argument("--no-preserve-dates", action="store_true",
+                        help="do not copy source timestamps onto the output")
+    parser.add_argument("--overwrite", action="store_true",
+                        help="replace existing output files")
+    parser.add_argument("--manifest", type=Path, metavar="CSV",
+                        help="write a source-to-output mapping to this CSV file")
+    parser.add_argument("-n", "--dry-run", action="store_true",
+                        help="list what would be converted, then exit")
+    args = parser.parse_args()
+
+    if shutil.which("ffmpeg") is None:
+        die("ffmpeg not found on PATH. Install it with: brew install ffmpeg")
+    if not args.source.is_dir():
+        die(f"source is not a directory: {args.source}")
+    if args.digits < 1:
+        die("--digits must be at least 1")
+
+    sources = find_sources(args.source, args.ext or ["MOD"])
+    if not sources:
+        die(f"no matching files in {args.source}")
+
+    # Resolve names up front so a collision is caught before any encoding starts.
+    jobs = []
+    for i, src in enumerate(sources):
+        name = f"{args.prefix}{args.start + i:0{args.digits}d}.mov"
+        jobs.append((src, args.dest / name))
+
+    mode = MODES[args.mode]
+    print(f"{len(jobs)} file(s), mode {args.mode} ({mode['label']})")
+    print(f"  {args.source}  ->  {args.dest}\n")
+
+    if args.dry_run:
+        for src, dst in jobs:
+            print(f"  {src.name}  ->  {dst.name}")
+        return 0
+
+    args.dest.mkdir(parents=True, exist_ok=True)
+
+    existing = [dst for _, dst in jobs if dst.exists()]
+    if existing and not args.overwrite:
+        die(f"{len(existing)} output file(s) already exist, e.g. {existing[0].name}. "
+            "Use --overwrite to replace them.")
+
+    failures, done = [], []
+    for i, (src, dst) in enumerate(jobs, 1):
+        print(f"[{i}/{len(jobs)}] {src.name} -> {dst.name}", flush=True)
+        result = subprocess.run(build_command(src, dst, args.mode, args),
+                                capture_output=True, text=True)
+        if result.returncode != 0 or not dst.exists():
+            detail = result.stderr.strip().splitlines()
+            print(f"    FAILED: {detail[-1] if detail else 'ffmpeg error'}",
+                  file=sys.stderr)
+            failures.append(src.name)
+            continue
+
+        if not args.no_preserve_dates:
+            st = src.stat()
+            os.utime(dst, (st.st_atime, st.st_mtime))
+
+        # A truncated encode is worse than a failed one -- it looks like success.
+        src_dur, dst_dur = probe_duration(src), probe_duration(dst)
+        if src_dur and dst_dur and abs(src_dur - dst_dur) > 0.5:
+            print(f"    warning: duration mismatch "
+                  f"({src_dur:.1f}s -> {dst_dur:.1f}s), output may be truncated",
+                  file=sys.stderr)
+        done.append((src, dst))
+
+    if args.manifest:
+        with open(args.manifest, "w", newline="") as fh:
+            writer = csv.writer(fh)
+            writer.writerow(["source", "output", "modified"])
+            for src, dst in done:
+                writer.writerow([src.name, dst.name,
+                                 f"{dst.stat().st_mtime:.0f}"])
+        print(f"\nmanifest written to {args.manifest}")
+
+    print(f"\ndone: {len(done)} converted, {len(failures)} failed")
+    if failures:
+        print("failed: " + ", ".join(failures), file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        print("\ninterrupted", file=sys.stderr)
+        sys.exit(130)
