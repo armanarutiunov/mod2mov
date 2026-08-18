@@ -57,18 +57,35 @@ rm "$(command -v mod2mov)"
 ## Usage
 
 ```sh
-mod2mov SOURCE_DIR DEST_DIR [--mode a|b|c]
+mod2mov SOURCE [DEST] [--mode a|b|c]
 ```
+
+`SOURCE` is either a folder of `.MOD` files or a single `.MOD` file. `DEST` is
+optional — leave it off and the output goes somewhere sensible:
+
+| You run | Output goes to | Named |
+|---------|----------------|-------|
+| `mod2mov ~/Downloads/videos1` | `~/Downloads/videos1_mov/` | `video_001.mov`, `video_002.mov`, … |
+| `mod2mov ~/Downloads/videos1/MOV001.MOD` | `~/Downloads/videos1/` | `MOV001.mov` |
+
+So a folder gets a sibling folder with a `_mov` suffix, and a single file lands
+next to the original. A batch is renumbered in shooting order; a lone file keeps
+its own name, since renaming it to `video_001.mov` would risk colliding with a
+batch you converted earlier. Pass `--prefix` to force sequence naming on a
+single file too.
 
 ```sh
 # the common case
-mod2mov ~/Downloads/videos1 ~/Movies/holiday
+mod2mov ~/Downloads/videos1
 
 # see what it would do first
-mod2mov ~/Downloads/videos1 ~/Movies/holiday --dry-run
+mod2mov ~/Downloads/videos1 --dry-run
 
-# keep full motion smoothness, and record what was renamed to what
+# somewhere specific, full motion smoothness, with a record of the renames
 mod2mov ~/Downloads/videos1 ~/Movies/holiday --mode b --manifest holiday.csv
+
+# continue the numbering from a second memory card
+mod2mov ~/Downloads/card2 ~/Movies/holiday --start 32
 ```
 
 ## Deinterlacing modes
@@ -93,7 +110,7 @@ camera movement in it. **a** and **b** differ in motion feel, not quality;
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-m`, `--mode` | `a` | Deinterlacing mode (see above) |
-| `-p`, `--prefix` | `video_` | Output filename prefix |
+| `-p`, `--prefix` | `video_` | Output filename prefix; also forces sequence naming for a single input file |
 | `-d`, `--digits` | `3` | Zero-padded digits in the sequence |
 | `-s`, `--start` | `1` | First sequence number |
 | `--crf` | `18` | x264 quality; lower is better, 18 is near-transparent |
@@ -116,6 +133,8 @@ camera movement in it. **a** and **b** differ in motion feel, not quality;
   outputs abort the run unless you pass `--overwrite`.
 - **Truncated encodes** are caught by comparing source and output duration after
   each file; a mismatch over 0.5s prints a warning.
+- **In-place conversion is refused** rather than letting ffmpeg read and write
+  the same path.
 - **Failures don't stop the run.** Remaining files still convert, the failed
   names are listed at the end, and the exit code is non-zero.
 

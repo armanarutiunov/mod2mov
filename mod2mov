@@ -93,7 +93,12 @@ def build_command(src, dst, mode, args):
 def main():
     epilog = "modes:\n" + "".join(
         f"  {k}  {v['label']:<22} {v['help']}\n" for k, v in MODES.items()
-    ) + "\nexample:\n  mod2mov ~/Downloads/videos1 ~/Movies/holiday --mode a\n"
+    ) + """
+examples:
+  mod2mov ~/Downloads/videos1                    -> ~/Downloads/videos1_mov/
+  mod2mov ~/Downloads/videos1 ~/Movies/holiday   -> the given folder
+  mod2mov ~/Downloads/videos1/MOV001.MOD         -> MOV001.mov, beside the source
+"""
 
     parser = argparse.ArgumentParser(
         prog="mod2mov",
@@ -102,12 +107,16 @@ def main():
         epilog=epilog,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("source", type=Path, help="directory containing .MOD files")
-    parser.add_argument("dest", type=Path, help="output directory (created if needed)")
+    parser.add_argument("source", type=Path,
+                        help="a directory of .MOD files, or a single .MOD file")
+    parser.add_argument("dest", type=Path, nargs="?", default=None,
+                        help="output directory; defaults to SOURCE_mov for a "
+                             "directory, or the file's own folder for a single file")
     parser.add_argument("-m", "--mode", choices=sorted(MODES), default="a",
                         help="deinterlacing mode (default: a)")
-    parser.add_argument("-p", "--prefix", default="video_",
-                        help="output filename prefix (default: video_)")
+    parser.add_argument("-p", "--prefix", default=None,
+                        help="output filename prefix (default: video_; a single "
+                             "input file keeps its own name unless this is set)")
     parser.add_argument("-d", "--digits", type=int, default=3,
                         help="zero-padded digits in the sequence (default: 3)")
     parser.add_argument("-s", "--start", type=int, default=1,
@@ -132,31 +141,52 @@ def main():
 
     if shutil.which("ffmpeg") is None:
         die("ffmpeg not found on PATH. Install it with: brew install ffmpeg")
-    if not args.source.is_dir():
-        die(f"source is not a directory: {args.source}")
     if args.digits < 1:
         die("--digits must be at least 1")
 
-    sources = find_sources(args.source, args.ext or ["MOD"])
-    if not sources:
-        die(f"no matching files in {args.source}")
+    source = args.source.expanduser()
+    if source.is_dir():
+        sources = find_sources(source, args.ext or ["MOD"])
+        if not sources:
+            die(f"no matching files in {source}")
+        # Default output sits beside the source folder, named <folder>_mov.
+        dest = args.dest or source.resolve().parent / f"{source.resolve().name}_mov"
+        # A batch is renumbered; a lone file keeps its name unless asked otherwise.
+        sequence = True
+    elif source.is_file():
+        sources = [source]
+        dest = args.dest or source.resolve().parent
+        sequence = args.prefix is not None
+    else:
+        die(f"source does not exist: {args.source}")
+
+    dest = Path(dest).expanduser()
+    prefix = args.prefix if args.prefix is not None else "video_"
 
     # Resolve names up front so a collision is caught before any encoding starts.
     jobs = []
     for i, src in enumerate(sources):
-        name = f"{args.prefix}{args.start + i:0{args.digits}d}.mov"
-        jobs.append((src, args.dest / name))
+        if sequence:
+            name = f"{prefix}{args.start + i:0{args.digits}d}.mov"
+        else:
+            name = f"{src.stem}.mov"
+        jobs.append((src, dest / name))
+
+    # Converting a file in place would have ffmpeg read and write the same path.
+    for src, dst in jobs:
+        if src.resolve() == dst.resolve():
+            die(f"output would overwrite the source file: {src}")
 
     mode = MODES[args.mode]
     print(f"{len(jobs)} file(s), mode {args.mode} ({mode['label']})")
-    print(f"  {args.source}  ->  {args.dest}\n")
+    print(f"  {source}  ->  {dest}\n")
 
     if args.dry_run:
         for src, dst in jobs:
             print(f"  {src.name}  ->  {dst.name}")
         return 0
 
-    args.dest.mkdir(parents=True, exist_ok=True)
+    dest.mkdir(parents=True, exist_ok=True)
 
     existing = [dst for _, dst in jobs if dst.exists()]
     if existing and not args.overwrite:
