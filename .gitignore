@@ -4,3 +4,8 @@
 *.mod
 *.csv
 __pycache__/
+
+# build artifacts
+build/
+dist/
+*.egg-info/
