@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mod2mov"
-version = "1.0.0"
+version = "1.1.0"
 description = "Convert camcorder .MOD files to .mov, renamed in shooting order with dates preserved"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -18,9 +18,13 @@ classifiers = [
     "Topic :: Multimedia :: Video :: Conversion",
 ]
 
-# Ships a static ffmpeg binary, so the tool works without a system install.
-# A system ffmpeg on PATH still takes precedence.
-dependencies = ["imageio-ffmpeg>=0.4.9"]
+# No hard dependencies: the tool drives a system ffmpeg, which install.sh
+# offers to install for you. The optional extra bundles a static ffmpeg for
+# machines where installing one isn't practical.
+dependencies = []
+
+[project.optional-dependencies]
+bundled = ["imageio-ffmpeg>=0.4.9"]
 
 [project.urls]
 Homepage = "https://github.com/armanarutiunov/mod2mov"

@@ -17,41 +17,41 @@ sorting by date still works.
 ## Requirements
 
 - Python 3.8+
-- ffmpeg — **bundled** if you install with `pipx`/`pip` (see below), otherwise
-  `brew install ffmpeg`
+- ffmpeg
 
 ## Install
 
-### With pipx (recommended — nothing else to install)
-
 ```sh
+brew install ffmpeg
+
 git clone https://github.com/armanarutiunov/mod2mov.git
 cd mod2mov
 ./install.sh
 ```
 
-`install.sh` uses `pipx` when it's available. That pulls in the
-[`imageio-ffmpeg`](https://pypi.org/project/imageio-ffmpeg/) dependency, which
-ships a static ffmpeg binary (~47MB) inside the virtualenv — so the tool works
-on a machine with no ffmpeg of its own. Verified: with `ffmpeg` and `ffprobe`
-both absent from `PATH`, conversions still run correctly.
+On Linux, swap the first line for `sudo apt-get install ffmpeg` (or `dnf`,
+`pacman` — whatever your distribution uses).
 
-No pipx? `brew install pipx` first, or install straight from the repo:
+`install.sh` installs the tool with `pipx` when it's available, falling back to
+a symlink otherwise. It doesn't touch ffmpeg — it only warns if it's missing.
 
-```sh
-pipx install git+https://github.com/armanarutiunov/mod2mov.git
-```
-
-### As a symlink (lighter, uses your own ffmpeg)
+### Options
 
 ```sh
-./install.sh --link          # or: ./install.sh --link ~/bin
+./install.sh --link          # just symlink; skip pipx entirely
+./install.sh --link ~/bin    # symlink into a specific directory
+./install.sh --bundled       # install a static ffmpeg into the venv (see below)
 ```
 
-This symlinks `mod2mov.py` into the first writable directory on your `PATH`
+`--link` symlinks `mod2mov.py` into the first writable directory on your `PATH`
 (`~/.local/bin`, `~/bin`, `/opt/homebrew/bin`, `/usr/local/bin`), so no `sudo`
-is needed and `git pull` updates the installed tool. It has no bundled ffmpeg,
-so you need `brew install ffmpeg` — the script warns if it's missing.
+is needed and `git pull` updates the installed tool.
+
+`--bundled` pulls in [`imageio-ffmpeg`](https://pypi.org/project/imageio-ffmpeg/),
+which ships a static ffmpeg binary (~47MB) inside the virtualenv. Use it when
+installing a system ffmpeg isn't practical. It's a GPL build, and it ships
+without `ffprobe` — the tool falls back to parsing ffmpeg's own output for its
+duration checks, so nothing is lost.
 
 ### Which ffmpeg gets used
 
@@ -60,11 +60,7 @@ Resolved in this order, first hit wins:
 1. `--ffmpeg /path/to/ffmpeg`
 2. `$MOD2MOV_FFMPEG`
 3. `ffmpeg` on your `PATH`
-4. the bundled copy from `imageio-ffmpeg`
-
-A system ffmpeg wins over the bundled one — it's usually newer, and you chose
-it. Note the bundled build ships without `ffprobe`; the tool falls back to
-parsing ffmpeg's own output for its duration checks, so nothing is lost.
+4. the bundled copy, if installed with `--bundled`
 
 ### Uninstall
 
@@ -162,10 +158,8 @@ camera movement in it. **a** and **b** differ in motion feel, not quality;
 
 MIT — see [LICENSE](LICENSE).
 
-The bundled ffmpeg is a separate work with its own terms. `imageio-ffmpeg`
-ships a GPL build (configured `--enable-gpl --enable-libx264`), so a pipx/pip
-install pulls in GPL-licensed binaries alongside this MIT-licensed script. That
-is fine for personal use and for redistributing this repo, which contains no
-ffmpeg binaries of its own — but worth knowing if you bundle mod2mov into a
-proprietary product. Installing with `--link` and your own ffmpeg avoids the
-question entirely.
+ffmpeg is a separate work with its own terms, and this repo contains no ffmpeg
+binaries. The default install uses whatever ffmpeg you installed yourself, so
+no ffmpeg licensing follows from using this tool. The optional `--bundled`
+install pulls a GPL ffmpeg build from PyPI — fine for personal use, but worth
+knowing if you ever embed mod2mov in a proprietary product.
