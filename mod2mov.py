@@ -112,7 +112,11 @@ def find_sources(src_dir, extensions):
     wanted = {e.lower().lstrip(".") for e in extensions}
     files = [
         p for p in src_dir.iterdir()
-        if p.is_file() and p.suffix.lower().lstrip(".") in wanted
+        if p.is_file()
+        and p.suffix.lower().lstrip(".") in wanted
+        # macOS writes AppleDouble sidecars ("._MOV001.MOD") onto FAT32 cards.
+        # They carry a video extension but are 4KB of resource-fork metadata.
+        and not p.name.startswith("._")
     ]
     return sorted(files, key=lambda p: (p.stat().st_mtime, p.name.lower()))
 
