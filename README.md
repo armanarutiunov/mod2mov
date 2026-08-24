@@ -35,7 +35,7 @@ On Linux, swap the first line for `sudo apt-get install ffmpeg` (or `dnf`,
 `install.sh` installs the tool with `pipx` when it's available, falling back to
 a symlink otherwise. It doesn't touch ffmpeg — it only warns if it's missing.
 
-### Options
+### Install options
 
 ```sh
 ./install.sh --link          # just symlink; skip pipx entirely
@@ -72,36 +72,77 @@ rm "$(command -v mod2mov)"  # if symlinked
 ## Usage
 
 ```sh
-mod2mov SOURCE [DEST] [--mode a|b|c]
+mod2mov SOURCE [DEST] [options]
+mod2mov help            # full option reference
 ```
 
-`SOURCE` is either a folder of `.MOD` files or a single `.MOD` file. `DEST` is
-optional — leave it off and the output goes somewhere sensible:
+`SOURCE` is a folder of `.MOD` files or a single `.MOD` file. `DEST` is
+optional. Running `mod2mov` with no arguments prints the help.
 
-| You run | Output goes to | Named |
-|---------|----------------|-------|
-| `mod2mov ~/Downloads/videos1` | `~/Downloads/videos1_mov/` | `video_001.mov`, `video_002.mov`, … |
-| `mod2mov ~/Downloads/videos1/MOV001.MOD` | `~/Downloads/videos1/` | `MOV001.mov` |
+### Output layout
 
-So a folder gets a sibling folder with a `_mov` suffix, and a single file lands
-next to the original. A batch is renumbered in shooting order; a lone file keeps
-its own name, since renaming it to `video_001.mov` would risk colliding with a
-batch you converted earlier. Pass `--prefix` to force sequence naming on a
-single file too.
+Files are **always** named `<YYYY-MM-DD>-vid-<NNN>.mov`, numbered within their
+own day, and grouped into **one folder per day**:
+
+```
+Aug 18, 2026/
+  2026-08-18-vid-001.mov
+  2026-08-18-vid-002.mov
+Aug 23, 2026/
+  2026-08-23-vid-001.mov
+  ...
+  2026-08-23-vid-104.mov
+```
+
+The date comes from each source file's timestamp, which for a camcorder is the
+moment the clip finished recording. Numbering restarts each day and is padded
+to three digits, so **alphabetical order always equals chronological order** —
+inside a day folder, and also if you later tip every file into one folder.
+
+Pass `--flat` to skip the day folders and write straight into `DEST`. The
+filenames are unchanged, so they still sort correctly:
+
+```
+2026-08-18-vid-001.mov
+2026-08-23-vid-104.mov
+```
+
+### Where the output goes
+
+`DEST` is independent of the layout — it only says where the tree starts.
+
+| You run | Output |
+|---------|--------|
+| `mod2mov ~/Downloads/videos1` | `~/Downloads/videos1_mov/Aug 23, 2026/2026-08-23-vid-001.mov` |
+| `mod2mov ~/Downloads/videos1 ~/Movies/holiday` | `~/Movies/holiday/Aug 23, 2026/2026-08-23-vid-001.mov` |
+| `mod2mov ~/Downloads/videos1 ~/Movies/holiday --flat` | `~/Movies/holiday/2026-08-23-vid-001.mov` |
+| `mod2mov ~/Downloads/videos1/MOV001.MOD` | a day folder beside the source file |
+
+Omit `DEST` and a folder converts into a sibling `<name>_mov` folder; a single
+file converts beside itself.
+
+### Examples
 
 ```sh
-# the common case
-mod2mov ~/Downloads/videos1
+# the common case -- day folders, 25p
+mod2mov ~/Downloads/videos1 ~/Movies/holiday
 
-# see what it would do first
-mod2mov ~/Downloads/videos1 --dry-run
+# see the full rename plan without encoding anything
+mod2mov ~/Downloads/videos1 ~/Movies/holiday --dry-run
 
-# somewhere specific, full motion smoothness, with a record of the renames
-mod2mov ~/Downloads/videos1 ~/Movies/holiday --mode b --manifest holiday.csv
+# everything in one folder, full motion smoothness, with a rename record
+mod2mov ~/Downloads/videos1 ~/Movies/holiday --flat --mode b --manifest holiday.csv
 
-# continue the numbering from a second memory card
-mod2mov ~/Downloads/card2 ~/Movies/holiday --start 32
+# a second card folder, into a destination that already has clips from that day
+mod2mov /Volumes/CARD/SD_VIDEO/PRG002 ~/Movies/holiday
 ```
+
+That last one matters: numbering **continues past whatever the target day
+folder already holds**, so a card split across `PRG001` and `PRG002` appends
+(`...-vid-062.mov` onward) instead of colliding. The flip side is that
+re-running over the same sources appends duplicates rather than skipping —
+use `--dry-run` first if you are unsure what a folder already contains.
+
 
 ## Deinterlacing modes
 
@@ -122,27 +163,37 @@ camera movement in it. **a** and **b** differ in motion feel, not quality;
 
 ## Options
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `-m`, `--mode` | `a` | Deinterlacing mode (see above) |
-| `-p`, `--prefix` | `video_` | Output filename prefix; also forces sequence naming for a single input file |
-| `-d`, `--digits` | `3` | Zero-padded digits in the sequence |
-| `-s`, `--start` | `1` | First sequence number |
-| `--crf` | `18` | x264 quality; lower is better, 18 is near-transparent |
-| `--preset` | `slow` | x264 speed/efficiency tradeoff |
-| `--audio-bitrate` | `192k` | AAC bitrate |
-| `--ext` | `MOD` | Source extension to match; repeatable |
-| `--no-preserve-dates` | off | Don't copy source timestamps onto the output |
-| `--overwrite` | off | Replace existing output files |
-| `--manifest CSV` | — | Write a source-to-output mapping |
-| `--ffmpeg PATH` | auto | Use a specific ffmpeg binary (also `$MOD2MOV_FFMPEG`) |
-| `-n`, `--dry-run` | off | List what would be converted, then exit |
+Every flag, with its default:
+
+| Flag | Default | What it does |
+|------|---------|--------------|
+| `SOURCE` | — | Folder of `.MOD` files, or one `.MOD` file. Required. |
+| `DEST` | see above | Where the output tree starts. Optional. |
+| `-m`, `--mode {a,b,c}` | `a` | Deinterlacing mode — see above. |
+| `-f`, `--flat` | off | Write every file straight into `DEST` instead of grouping into a folder per day. Filenames are unchanged. |
+| `--folder-format FMT` | `%b %d, %Y` | `strftime` format for the day folders, e.g. `Aug 23, 2026`. Use `%Y-%m-%d` for `2026-08-23`. Ignored with `--flat`. |
+| `--crf N` | `18` | x264 quality. Lower is better; 18 is near-transparent, 23 is ffmpeg's default, 28 is visibly lossy. |
+| `--preset NAME` | `slow` | x264 speed/efficiency tradeoff (`ultrafast` … `veryslow`). Slower means a smaller file at the same quality. |
+| `--audio-bitrate RATE` | `192k` | AAC bitrate. |
+| `--ext EXT` | `MOD` | Source extension to match. Repeatable: `--ext MPG --ext TOD`. |
+| `--no-preserve-dates` | off | Don't copy source timestamps onto the output. The day folders still come from the source date. |
+| `--overwrite` | off | Replace existing output files instead of aborting. |
+| `--manifest CSV` | — | Write a source-to-output mapping, with each output's timestamp. |
+| `--ffmpeg PATH` | auto | Use a specific ffmpeg binary. Also settable as `$MOD2MOV_FFMPEG`. |
+| `-n`, `--dry-run` | off | Print the full rename plan and exit without encoding. |
+| `-h`, `--help`, `help` | — | Print the full reference. Also shown when run with no arguments. |
+
 
 ## Notes on correctness
 
 - **Ordering** is by modification time, with filename as tiebreaker. Camcorder
   hex numbering already sorts correctly, but sorting by time also survives a
   card whose counter has wrapped.
+- **Numbering continues** past whatever a day folder already holds, so a card
+  split across `PRG001`/`PRG002` appends rather than colliding. The flip side:
+  re-running over the same sources appends duplicates instead of skipping.
+- **Three-digit padding** because a single day can hold more than 99 clips, and
+  `vid-100` would otherwise sort before `vid-11`.
 - **Aspect ratio** is carried through by ffmpeg. PAL SD stores 720×576 with a
   16:15 pixel aspect that displays as 4:3; losing that flag stretches the image.
 - **Name collisions** are resolved before any encoding starts, and existing

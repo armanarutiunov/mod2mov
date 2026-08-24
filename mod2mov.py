@@ -9,6 +9,7 @@ them to H.264/AAC in a .mov container and renames them into a readable sequence.
 
 import argparse
 import csv
+import datetime
 import os
 import re
 import shutil
@@ -134,20 +135,56 @@ def build_command(src, dst, mode, args, ffmpeg):
     return cmd
 
 
+def plan_jobs(sources, dest, flat=False, folder_format="%b %d, %Y"):
+    """Map each source file to its output path.
+
+    Names are always <YYYY-MM-DD>-vid-<NNN>.mov, numbered within their own day,
+    so alphabetical order matches chronological order whether the files sit in
+    day folders or all together. Three digits because a single day can easily
+    hold more than 99 clips, and "vid-100" would otherwise sort before "vid-11".
+
+    Numbering continues past whatever the target folder already holds for that
+    day, so a second card folder appends rather than colliding.
+    """
+    by_day = {}
+    for src in sources:
+        day = datetime.date.fromtimestamp(src.stat().st_mtime)
+        by_day.setdefault(day, []).append(src)
+
+    jobs = []
+    for day, items in sorted(by_day.items()):
+        folder = dest if flat else dest / day.strftime(folder_format)
+        stamp = day.isoformat()
+        # Count what is already there so a rerun or a second card continues on.
+        existing = len(list(folder.glob(f"{stamp}-vid-*.mov"))) if folder.is_dir() else 0
+        for i, src in enumerate(items, existing + 1):
+            jobs.append((src, folder / f"{stamp}-vid-{i:03d}.mov"))
+    return jobs
+
+
 def run():
     epilog = "modes:\n" + "".join(
         f"  {k}  {v['label']:<22} {v['help']}\n" for k, v in MODES.items()
     ) + """
+output naming:
+  Files are always named <YYYY-MM-DD>-vid-<NNN>.mov, numbered within their own
+  day, and grouped into a folder per day. Pass --flat to skip the folders.
+
 examples:
-  mod2mov ~/Downloads/videos1                    -> ~/Downloads/videos1_mov/
-  mod2mov ~/Downloads/videos1 ~/Movies/holiday   -> the given folder
-  mod2mov ~/Downloads/videos1/MOV001.MOD         -> MOV001.mov, beside the source
+  mod2mov ~/Downloads/videos1
+      -> ~/Downloads/videos1_mov/Aug 23, 2026/2026-08-23-vid-001.mov
+
+  mod2mov ~/Downloads/videos1 ~/Movies/holiday --flat
+      -> ~/Movies/holiday/2026-08-23-vid-001.mov
+
+  mod2mov ~/Downloads/videos1/MOV001.MOD
+      -> 2026-08-23-vid-001.mov, in a day folder beside the source
 """
 
     parser = argparse.ArgumentParser(
         prog="mod2mov",
-        description="Convert camcorder .MOD files to .mov, renaming them in "
-                    "shooting order and preserving their original dates.",
+        description="Convert camcorder .MOD files to .mov, renaming them by date in "
+                    "shooting order and preserving their original timestamps.",
         epilog=epilog,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -158,13 +195,12 @@ examples:
                              "directory, or the file's own folder for a single file")
     parser.add_argument("-m", "--mode", choices=sorted(MODES), default="a",
                         help="deinterlacing mode (default: a)")
-    parser.add_argument("-p", "--prefix", default=None,
-                        help="output filename prefix (default: video_; a single "
-                             "input file keeps its own name unless this is set)")
-    parser.add_argument("-d", "--digits", type=int, default=3,
-                        help="zero-padded digits in the sequence (default: 3)")
-    parser.add_argument("-s", "--start", type=int, default=1,
-                        help="first sequence number (default: 1)")
+    parser.add_argument("-f", "--flat", action="store_true",
+                        help="put every file straight into DEST instead of "
+                             "grouping it into a folder per day")
+    parser.add_argument("--folder-format", default="%b %d, %Y", metavar="FMT",
+                        help='strftime format for the day folders '
+                             '(default: "%%b %%d, %%Y" -> "Aug 23, 2026")')
     parser.add_argument("--crf", type=int, default=18,
                         help="x264 quality, lower is better (default: 18)")
     parser.add_argument("--preset", default="slow",
@@ -183,15 +219,18 @@ examples:
                         help="use a specific ffmpeg binary (also: MOD2MOV_FFMPEG)")
     parser.add_argument("-n", "--dry-run", action="store_true",
                         help="list what would be converted, then exit")
-    args = parser.parse_args()
+    # Bare `mod2mov` or `mod2mov help` should explain itself rather than error.
+    argv = sys.argv[1:]
+    if not argv or argv[0] in ("help", "-h", "--help"):
+        parser.print_help()
+        return 0
+
+    args = parser.parse_args(argv)
 
     ffmpeg = resolve_ffmpeg(args.ffmpeg)
     if ffmpeg is None:
         die("no ffmpeg available. Either install it (brew install ffmpeg), or "
             "reinstall this tool with its bundled copy (pipx install mod2mov).")
-    if args.digits < 1:
-        die("--digits must be at least 1")
-
     source = args.source.expanduser()
     if source.is_dir():
         sources = find_sources(source, args.ext or ["MOD"])
@@ -199,26 +238,16 @@ examples:
             die(f"no matching files in {source}")
         # Default output sits beside the source folder, named <folder>_mov.
         dest = args.dest or source.resolve().parent / f"{source.resolve().name}_mov"
-        # A batch is renumbered; a lone file keeps its name unless asked otherwise.
-        sequence = True
     elif source.is_file():
         sources = [source]
         dest = args.dest or source.resolve().parent
-        sequence = args.prefix is not None
     else:
         die(f"source does not exist: {args.source}")
 
     dest = Path(dest).expanduser()
-    prefix = args.prefix if args.prefix is not None else "video_"
 
     # Resolve names up front so a collision is caught before any encoding starts.
-    jobs = []
-    for i, src in enumerate(sources):
-        if sequence:
-            name = f"{prefix}{args.start + i:0{args.digits}d}.mov"
-        else:
-            name = f"{src.stem}.mov"
-        jobs.append((src, dest / name))
+    jobs = plan_jobs(sources, dest, flat=args.flat, folder_format=args.folder_format)
 
     # Converting a file in place would have ffmpeg read and write the same path.
     for src, dst in jobs:
@@ -231,10 +260,12 @@ examples:
 
     if args.dry_run:
         for src, dst in jobs:
-            print(f"  {src.name}  ->  {dst.name}")
+            shown = dst.name if args.flat else f"{dst.parent.name}/{dst.name}"
+            print(f"  {src.name}  ->  {shown}")
         return 0
 
-    dest.mkdir(parents=True, exist_ok=True)
+    for _, dst in jobs:
+        dst.parent.mkdir(parents=True, exist_ok=True)
 
     existing = [dst for _, dst in jobs if dst.exists()]
     if existing and not args.overwrite:
@@ -243,7 +274,8 @@ examples:
 
     failures, done = [], []
     for i, (src, dst) in enumerate(jobs, 1):
-        print(f"[{i}/{len(jobs)}] {src.name} -> {dst.name}", flush=True)
+        shown = dst.name if args.flat else f"{dst.parent.name}/{dst.name}"
+        print(f"[{i}/{len(jobs)}] {src.name} -> {shown}", flush=True)
         result = subprocess.run(build_command(src, dst, args.mode, args, ffmpeg),
                                 capture_output=True, text=True)
         if result.returncode != 0 or not dst.exists():
