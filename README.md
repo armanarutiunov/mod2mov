@@ -82,24 +82,28 @@ optional. Running `mod2mov` with no arguments prints the help.
 ### Output layout
 
 Files are **always** named `<YYYY-MM-DD>-vid-<NNN>.mov`, numbered within their
-own day, and grouped into **one folder per day**:
+own day, and grouped into **a year folder, then one folder per day**:
 
 ```
-Aug 18, 2026/
-  2026-08-18-vid-001.mov
-  2026-08-18-vid-002.mov
-Aug 23, 2026/
-  2026-08-23-vid-001.mov
-  ...
-  2026-08-23-vid-104.mov
+2026/
+  Aug 18/
+    2026-08-18-vid-001.mov
+    2026-08-18-vid-002.mov
+  Aug 23/
+    2026-08-23-vid-001.mov
+    ...
+    2026-08-23-vid-104.mov
 ```
+
+The filename repeats the full date even though the folders already carry it, so
+a clip stays self-describing if it is ever moved or shared on its own.
 
 The date comes from each source file's timestamp, which for a camcorder is the
 moment the clip finished recording. Numbering restarts each day and is padded
 to three digits, so **alphabetical order always equals chronological order** —
 inside a day folder, and also if you later tip every file into one folder.
 
-Pass `--flat` to skip the day folders and write straight into `DEST`. The
+Pass `--flat` to skip the folders entirely and write straight into `DEST`. The
 filenames are unchanged, so they still sort correctly:
 
 ```
@@ -113,10 +117,10 @@ filenames are unchanged, so they still sort correctly:
 
 | You run | Output |
 |---------|--------|
-| `mod2mov ~/Downloads/videos1` | `~/Downloads/videos1_mov/Aug 23, 2026/2026-08-23-vid-001.mov` |
-| `mod2mov ~/Downloads/videos1 ~/Movies/holiday` | `~/Movies/holiday/Aug 23, 2026/2026-08-23-vid-001.mov` |
+| `mod2mov ~/Downloads/videos1` | `~/Downloads/videos1_mov/2026/Aug 23/2026-08-23-vid-001.mov` |
+| `mod2mov ~/Downloads/videos1 ~/Movies/holiday` | `~/Movies/holiday/2026/Aug 23/2026-08-23-vid-001.mov` |
 | `mod2mov ~/Downloads/videos1 ~/Movies/holiday --flat` | `~/Movies/holiday/2026-08-23-vid-001.mov` |
-| `mod2mov ~/Downloads/videos1/MOV001.MOD` | a day folder beside the source file |
+| `mod2mov ~/Downloads/videos1/MOV001.MOD` | a `2026/Aug 23/` folder beside the source file |
 
 Omit `DEST` and a folder converts into a sibling `<name>_mov` folder; a single
 file converts beside itself.
@@ -124,7 +128,7 @@ file converts beside itself.
 ### Examples
 
 ```sh
-# the common case -- day folders, 25p
+# the common case -- year/day folders, 25p
 mod2mov ~/Downloads/videos1 ~/Movies/holiday
 
 # see the full rename plan without encoding anything
@@ -170,8 +174,8 @@ Every flag, with its default:
 | `SOURCE` | — | Folder of `.MOD` files, or one `.MOD` file. Required. |
 | `DEST` | see above | Where the output tree starts. Optional. |
 | `-m`, `--mode {a,b,c}` | `a` | Deinterlacing mode — see above. |
-| `-f`, `--flat` | off | Write every file straight into `DEST` instead of grouping into a folder per day. Filenames are unchanged. |
-| `--folder-format FMT` | `%b %d, %Y` | `strftime` format for the day folders, e.g. `Aug 23, 2026`. Use `%Y-%m-%d` for `2026-08-23`. Ignored with `--flat`. |
+| `-f`, `--flat` | off | Write every file straight into `DEST` instead of building the year/day tree. Filenames are unchanged, so they still sort correctly. |
+| `--folder-format FMT` | `%Y/%b %d` | `strftime` format for the folders; a `/` nests. Default gives `2026/Aug 23`. Try `%Y-%m-%d` for a single flat-named folder, or `%Y/%m` to group by month. Ignored with `--flat`. |
 | `--crf N` | `18` | x264 quality. Lower is better; 18 is near-transparent, 23 is ffmpeg's default, 28 is visibly lossy. |
 | `--preset NAME` | `slow` | x264 speed/efficiency tradeoff (`ultrafast` … `veryslow`). Slower means a smaller file at the same quality. |
 | `--audio-bitrate RATE` | `192k` | AAC bitrate. |

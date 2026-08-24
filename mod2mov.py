@@ -135,7 +135,7 @@ def build_command(src, dst, mode, args, ffmpeg):
     return cmd
 
 
-def plan_jobs(sources, dest, flat=False, folder_format="%b %d, %Y"):
+def plan_jobs(sources, dest, flat=False, folder_format="%Y/%b %d"):
     """Map each source file to its output path.
 
     Names are always <YYYY-MM-DD>-vid-<NNN>.mov, numbered within their own day,
@@ -145,6 +145,10 @@ def plan_jobs(sources, dest, flat=False, folder_format="%b %d, %Y"):
 
     Numbering continues past whatever the target folder already holds for that
     day, so a second card folder appends rather than colliding.
+
+    A folder_format containing "/" nests, so the default "%Y/%b %d" yields
+    "2026/Aug 22". The filename still carries the full date, so files remain
+    self-describing if they are ever moved out of the tree.
     """
     by_day = {}
     for src in sources:
@@ -168,17 +172,17 @@ def run():
     ) + """
 output naming:
   Files are always named <YYYY-MM-DD>-vid-<NNN>.mov, numbered within their own
-  day, and grouped into a folder per day. Pass --flat to skip the folders.
+  day, and grouped into year/day folders. Pass --flat to skip the folders.
 
 examples:
   mod2mov ~/Downloads/videos1
-      -> ~/Downloads/videos1_mov/Aug 23, 2026/2026-08-23-vid-001.mov
+      -> ~/Downloads/videos1_mov/2026/Aug 23/2026-08-23-vid-001.mov
 
   mod2mov ~/Downloads/videos1 ~/Movies/holiday --flat
       -> ~/Movies/holiday/2026-08-23-vid-001.mov
 
   mod2mov ~/Downloads/videos1/MOV001.MOD
-      -> 2026-08-23-vid-001.mov, in a day folder beside the source
+      -> 2026-08-23-vid-001.mov, in a year/day folder beside the source
 """
 
     parser = argparse.ArgumentParser(
@@ -197,10 +201,10 @@ examples:
                         help="deinterlacing mode (default: a)")
     parser.add_argument("-f", "--flat", action="store_true",
                         help="put every file straight into DEST instead of "
-                             "grouping it into a folder per day")
-    parser.add_argument("--folder-format", default="%b %d, %Y", metavar="FMT",
-                        help='strftime format for the day folders '
-                             '(default: "%%b %%d, %%Y" -> "Aug 23, 2026")')
+                             "building the year/day folder tree")
+    parser.add_argument("--folder-format", default="%Y/%b %d", metavar="FMT",
+                        help='strftime format for the day folders; "/" nests '
+                             '(default: "%%Y/%%b %%d" -> "2026/Aug 23")')
     parser.add_argument("--crf", type=int, default=18,
                         help="x264 quality, lower is better (default: 18)")
     parser.add_argument("--preset", default="slow",
@@ -260,8 +264,7 @@ examples:
 
     if args.dry_run:
         for src, dst in jobs:
-            shown = dst.name if args.flat else f"{dst.parent.name}/{dst.name}"
-            print(f"  {src.name}  ->  {shown}")
+            print(f"  {src.name}  ->  {dst.relative_to(dest)}")
         return 0
 
     for _, dst in jobs:
@@ -274,8 +277,7 @@ examples:
 
     failures, done = [], []
     for i, (src, dst) in enumerate(jobs, 1):
-        shown = dst.name if args.flat else f"{dst.parent.name}/{dst.name}"
-        print(f"[{i}/{len(jobs)}] {src.name} -> {shown}", flush=True)
+        print(f"[{i}/{len(jobs)}] {src.name} -> {dst.relative_to(dest)}", flush=True)
         result = subprocess.run(build_command(src, dst, args.mode, args, ffmpeg),
                                 capture_output=True, text=True)
         if result.returncode != 0 or not dst.exists():
