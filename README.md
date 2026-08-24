@@ -151,6 +151,10 @@ camera movement in it. **a** and **b** differ in motion feel, not quality;
   each file; a mismatch over 0.5s prints a warning.
 - **In-place conversion is refused** rather than letting ffmpeg read and write
   the same path.
+- **AppleDouble sidecars are skipped.** macOS writes `._MOV001.MOD` files onto
+  FAT32 cards; they carry a video extension but hold 4KB of resource-fork
+  metadata, and would otherwise take a slot in the numbering.
+- **Sources are never modified**, only read.
 - **Failures don't stop the run.** Remaining files still convert, the failed
   names are listed at the end, and the exit code is non-zero.
 
